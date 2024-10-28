@@ -203,7 +203,7 @@ def find_multiple(n: int, k: int) -> int:
 def device_sync(device="cpu"):
     if "cuda" in device:
         torch.cuda.synchronize(device)
-    elif ("cpu" in device) or ("mps" in device):
+    elif ("cpu" in device) or ("mps" in device) or ("xpu" in device):
         pass
     else:
         logging.error(f"device={ device } is not yet suppported")
