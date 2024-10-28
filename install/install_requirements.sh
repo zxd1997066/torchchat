@@ -70,6 +70,9 @@ then
 elif [[ -x "$(command -v rocminfo)" ]];
 then
   TORCH_NIGHTLY_URL="https://download.pytorch.org/whl/nightly/rocm6.2"
+elif [[ -x "$(command -v xpu-smi)" ]];
+then
+  TORCH_NIGHTLY_URL="https://download.pytorch.org/whl/nightly/xpu"
 else
   TORCH_NIGHTLY_URL="https://download.pytorch.org/whl/nightly/cpu"
 fi
