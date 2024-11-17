@@ -405,6 +405,8 @@ def _add_generation_args(parser, verb: str) -> None:
         action="store_true",
         help="Whether to use max-autotune.",
     )
+    generator_parser.add_argument("--num-iter", default=10, type=int, help="num iter")
+    generator_parser.add_argument("--num-warmup", default=3, type=int, help="num warmup")
 
 
 # Add CLI Args specific to Model Evaluation
