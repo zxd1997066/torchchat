@@ -227,6 +227,8 @@ class GeneratorArgs:
     speculate_k: int = 5
     sequential_prefill: bool = False
     max_autotune: bool = False
+    num_iter: int = 10
+    num_warmup: int = 3
     # (Misnomer) See Issue: https://github.com/pytorch/torchchat/issues/1273
     is_torchtune_model: bool = False
 
@@ -1106,6 +1108,10 @@ class LocalGenerator:
         num_samples = (
             generator_args.num_samples if not generator_args.chat_mode else 100000
         )
+        total_time = 0.0
+        total_tokens = 0
+        total_first = 0
+        total_next = 0
         for i in range(num_samples):
             device_sync(device=self.builder_args.device)
             is_first_sample: bool = i == 0
@@ -1163,14 +1169,18 @@ class LocalGenerator:
 
                 torch._inductor.config.profiler_mark_wrapper_call = True
                 torch._inductor.config.cpp.enable_kernel_profile = True
-            if i != generator_args.num_samples - 1 or not self.profile:
+            if (i != generator_args.num_samples - 1 or not self.profile) or (
+                self.builder_args.distributed and self.rank != 0
+            ):
+                import contextlib
+
                 prof = contextlib.nullcontext()
             else:
                 torch.profiler._utils._init_for_cuda_graphs()
                 prof = torch.profiler.profile()
             t0 = time.perf_counter()
             num_tokens_generated = 0
-            with prof:
+            with prof:      
                 generator_func = self.generate(
                     self.model,
                     encoded,
@@ -1193,6 +1203,7 @@ class LocalGenerator:
                         num_tokens_generated += token_tensor.size(0)
                     if metrics is not None:
                         aggregate_metrics.update(metrics)
+
                     yield token_tensor, metrics
             jit_compile = is_first_sample and (
                 generator_args.compile or generator_args.compile_prefill
@@ -1200,11 +1211,24 @@ class LocalGenerator:
             compilation_time = time.perf_counter() - t0
             device_sync(device=self.builder_args.device)
             t = time.perf_counter() - t0
+        
+            tokens_sec = (num_tokens_generated + 1) / t
+            first_token_sec = 1 / aggregate_metrics.get("time_to_first_token", 0)
+            next_tokens_sec = num_tokens_generated / (
+                t - aggregate_metrics.get("time_to_first_token", 0)
+            )   
+            if i >= generator_args.num_warmup:
+                total_time += t
+                total_tokens += num_tokens_generated
+                total_first += first_token_sec
+                total_next += next_tokens_sec
+                
             if hasattr(prof, "export_chrome_trace"):
                 if self.builder_args.device == "cpu":
                     print(prof.key_averages().table(sort_by="self_cpu_time_total"))
                 else:
                     print(prof.key_averages().table(sort_by="self_cuda_time_total"))
+
                 prof.export_chrome_trace(f"{self.profile}.json")
 
             if start_pos >= max_seq_length:
@@ -1254,6 +1278,36 @@ with {'sequential' if generator_args.sequential_prefill else 'parallel'} prefill
 
             if not generator_args.chat_mode:
                 start_pos = 0
+        tokens_sec = (total_tokens + 1) / total_time
+        avg_first_token_sec = total_first / (num_samples - generator_args.num_warmup)
+        avg_next_tokens_sec = total_next / (num_samples - generator_args.num_warmup)
+
+        if jit_compile:
+            print(
+                f"just-in-time compilation time (incl run time): {compilation_time:.2} seconds"
+            )
+        
+            
+        logging.info(
+            f"\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\
+            \nGenerated {total_tokens} tokens \
+            \nTime for inference {i + 1}: {total_time:.04f} sec total \
+            \nTime to avg first token: {avg_first_token_sec:.04f} sec \
+with {'sequential' if generator_args.sequential_prefill else 'parallel'} prefill.\
+            \n\n      Total throughput: {tokens_sec:.04f} tokens/sec, {1 / tokens_sec:.04f} s/token \
+            \nFirst token throughput: {avg_first_token_sec:.04f} tokens/sec, {1 / avg_first_token_sec:.04f} s/token \
+            \n Next token throughput: {avg_next_tokens_sec:.04f} tokens/sec, {1 / avg_next_tokens_sec:.04f} s/token \
+                "
+        )
+        logging.info(
+            f"\nBandwidth achieved: {model_size * tokens_sec / 1e9:.02f} GB/s"
+        )
+        if i == 0:
+            logging.info(
+                f"*** This first iteration will include cold start effects for dynamic import, hardware caches{', JIT compilation' if jit_compile else ''}. ***"
+            )
+        print("\n========================================\n")
+            
 
         if self.is_speculative:
             counts_aggregated = [
