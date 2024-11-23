@@ -1219,7 +1219,7 @@ class LocalGenerator:
             )   
             if i >= generator_args.num_warmup:
                 total_time += t
-                total_tokens += num_tokens_generated
+                total_tokens = total_tokens + num_tokens_generated + 1
                 total_first += first_token_sec
                 total_next += next_tokens_sec
                 
@@ -1278,7 +1278,7 @@ with {'sequential' if generator_args.sequential_prefill else 'parallel'} prefill
 
             if not generator_args.chat_mode:
                 start_pos = 0
-        tokens_sec = (total_tokens + 1) / total_time
+        tokens_sec = total_tokens / total_time
         avg_first_token_sec = total_first / (num_samples - generator_args.num_warmup)
         avg_next_tokens_sec = total_next / (num_samples - generator_args.num_warmup)
 
