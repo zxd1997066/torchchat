@@ -38,13 +38,13 @@ def get_device_info(device: str) -> str:
     if device == "cuda":
         return torch.cuda.get_device_name(0)
         if device == "xpu":
-        return (
-            check_output(
-                ["xpu-smi discovery |grep 'Device Name:'"], shell=True
-            )
-            .decode("utf-8")
-            .split("\n")[0]
-            .split("Device Name:")[1]
-            )
+            return (
+                check_output(
+                    ["xpu-smi discovery |grep 'Device Name:'"], shell=True
+                )
+                .decode("utf-8")
+                .split("\n")[0]
+                .split("Device Name:")[1]
+                )
 
     return ""
